@@ -1,0 +1,7 @@
+.vs
+*.vsp
+*.user
+
+/bin
+/obj
+/packages
