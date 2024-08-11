@@ -4,11 +4,10 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
 
 namespace RleSearch
 {
-    class HistoryPattern
+    class HistoryPattern : IEquatable<HistoryPattern>
     {
         public readonly int Width;
         public readonly int Height;
@@ -97,6 +96,28 @@ namespace RleSearch
         public static HistoryPattern ReadRLE(string fileName)
         {
             return ReadRLE(File.ReadAllLines(fileName));
+        }
+
+        public override int GetHashCode()
+        {
+            int hash = Width << 16 | Height;
+            int shift = 0;
+            for (int i = 0; i < cells.Length; i++)
+            {
+                hash = hash ^ cells[i] << shift;
+                shift = (shift + 1) & 31;
+            }
+            return hash;
+        }
+
+        public bool Equals(HistoryPattern other)
+        {
+            if (Width != other.Width || Height != other.Height)
+                return false;
+            for (int i = 0; i < cells.Length; i++)
+                if (cells[i] != other.cells[i])
+                    return false;
+            return true;
         }
 
         void WrapCoordinates(ref int x, ref int y)
@@ -464,12 +485,13 @@ namespace RleSearch
         }
 
         bool Search(HistoryPattern obj, HistoryPattern pattern,
-            int ticks, ref int objX, ref int objY, ref int objTick, ref int objOrientation)
+            int ticks, ref int objX, ref int objY, ref int objXperc, ref int objYperc,
+            ref int objTick, ref int objOrientation)
         {
             Pattern expanded = new Pattern(pattern.Width + 6, pattern.Height + 6);
             expanded.Stamp(HistoryToLife(pattern), 3, 3);
 
-            var transforms = new List<HistoryPattern>();
+            var transforms = new Dictionary<HistoryPattern, int>();
             for (int swapxy = 0; swapxy < 2; swapxy++)
                 for (int reverseX = 0; reverseX < 2; reverseX++)
                     for (int reverseY = 0; reverseY < 2; reverseY++)
@@ -486,19 +508,23 @@ namespace RleSearch
                                         reverseY == 0 ? y : obj.Height - y - 1];
                             }
                         }
-                        transforms.Add(transformed);
+                        int orientation = swapxy * 4 + reverseX * 2 + reverseY;
+                        if (!transforms.ContainsKey(transformed))
+                            transforms.Add(transformed, orientation);
                     }
 
             for (int tick = 0; tick < ticks; tick++)
             {
-                for (int o = 0; o < transforms.Count; o++)
+                foreach (var tkv in transforms)
                 {
-                    if (Search(transforms[o], expanded, ref objX, ref objY))
+                    if (Search(tkv.Key, expanded, ref objX, ref objY))
                     {
                         objX -= 3;
                         objY -= 3;
+                        objXperc = 100 * objX / (pattern.Width - tkv.Key.Width);
+                        objYperc = 100 * objY / (pattern.Height - tkv.Key.Height);
                         objTick = tick;
-                        objOrientation = o;
+                        objOrientation = tkv.Value;
                         return true;
                     }
                 }
@@ -529,27 +555,26 @@ namespace RleSearch
             var obj = HistoryPattern.ReadRLE(objectPath);
 
             var fileNames = Directory.EnumerateFiles(searchDirectory, "*.rle").ToArray();
+            Console.Write($"Loading {fileNames.Length} patterns...");
             var patterns = fileNames.Select(x => HistoryPattern.ReadRLE(x)).ToArray();
+            Console.WriteLine(" Done");
 
             int foundCount = 0;
             for (int i = 0; i < patterns.Length; i++)
             {
                 int objX = -1;
+                int objXperc = -1;
                 int objY = -1;
+                int objYperc = -1;
                 int objTick = -1;
                 int objOrientation = -1;
                 var pattern = patterns[i];
-                if (obj.Width >= pattern.Width)
-                    continue;
-                if (obj.Height >= pattern.Height)
-                    continue;
-                if (Search(obj, pattern, ticks, ref objX, ref objY, ref objTick, ref objOrientation))
+                if (Search(obj, pattern, ticks, ref objX, ref objY,
+                    ref objXperc, ref objYperc, ref objTick, ref objOrientation))
                 {
-                    int objXperc = 100 * objX / (pattern.Width - obj.Width);
-                    int objYperc = 100 * objY / (pattern.Height - obj.Height);
                     foundCount++;
                     string name = Path.GetFileNameWithoutExtension(fileNames[i]);
-                    Console.WriteLine($"{name, -9}| x ={objX, 3} ! {objXperc,3}% | y ={objY, 3} ! {objYperc,3}% | t ={objTick, 3} | o = {objOrientation}");
+                    Console.WriteLine($"{name, -9}| x ={objX, 4} ! {objXperc,3}% | y ={objY, 4} ! {objYperc,3}% | t ={objTick, 3} | o = {objOrientation}");
                 }
             }
             Console.WriteLine($"{foundCount} patterns found");
